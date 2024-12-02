@@ -1,0 +1,206 @@
+import sys
+import psycopg2
+import helpers
+import math 
+
+### Globals
+db = None
+Region = None
+
+
+### Command-line args
+if len(sys.argv) != 2:
+    print(f"Usage: {sys.argv[0]} <Region>", file=sys.stderr)
+    sys.exit(1)
+Region = helpers.clean(sys.argv[1])
+
+def get_games_by_region(region):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Games.Name FROM Games
+        WHERE Games.Region = %s::Regions
+    """, (region,))
+    return [row for row in cur.fetchall()]
+
+def get_locations(Region):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT DISTINCT Locations.Name FROM Locations
+        JOIN Games ON Locations.Appears_In = Games.ID
+        WHERE Games.Region = %s::Regions
+    """, (Region,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_pokemon_by_location(location, game):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Pokemon.Name, Encounters.ID FROM Pokemon
+        JOIN Encounters ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID
+        WHERE Locations.Name = %s AND Games.Name LIKE %s
+    """, (location, game,))
+    return [row for row in cur.fetchall()]
+
+def get_height(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Pokemon.Average_Height FROM Pokemon
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return cur.fetchone()[0]
+
+def get_weight(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Pokemon.Average_Weight FROM Pokemon
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return cur.fetchone()[0]
+
+def get_rarity(pokemon_name, location, game, e_id):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Rarity FROM Encounters
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID 
+        WHERE Pokemon.Name LIKE %s AND Locations.Name = %s AND Games.Name LIKE %s AND Encounters.ID = %s
+    """, (pokemon_name, location, game, e_id))
+    return cur.fetchone()[0]
+
+def check_pokemon_in_game(pokemon_name, e_id, game):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Games.ID FROM Games
+        JOIN Locations ON Locations.Appears_In = Games.ID 
+        JOIN Encounters ON Encounters.Occurs_At = Locations.ID
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        WHERE Pokemon.Name LIKE %s AND Encounters.ID = %s AND Games.Name LIKE %s
+    """, (pokemon_name, e_id, game))
+    return cur.fetchone()[0]
+
+def create_table():
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE values (
+            game TEXT PRIMARY KEY,
+            density DOUBLE PRECISION
+        )
+    """, )
+    return 
+
+def insert_values(game, density):
+    cur = db.cursor()
+    cur.execute("""
+        INSERT INTO values (game, density) VALUES (%s, %s)
+    """, (game, density))
+    return 
+
+def return_values():
+    cur = db.cursor()
+    cur.execute("""
+        SELECT game, density FROM values
+    """, )
+    return [row for row in cur.fetchall()] 
+
+def check_region(region):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Region FROM Games
+        WHERE Games.region = %s::Regions
+    """, (region,))
+    return cur.fetchall()
+
+def delete_table():
+    cur = db.cursor()
+    cur.execute("""
+        DROP TABLE values
+    """, )
+    return 
+
+def create_table_result():
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE result (
+            location TEXT PRIMARY KEY,
+            density FLOAT
+        )
+    """, )
+    return 
+
+def insert_locations(location, density):
+    cur = db.cursor()
+    cur.execute("""
+        INSERT INTO result (location, density) VALUES (%s, %s)
+    """, (location, density))
+    return 
+
+def return_locations():
+    cur = db.cursor()
+    cur.execute("""
+        SELECT location, density FROM result
+        ORDER BY density DESC, location
+    """, )
+    return [row for row in cur.fetchall()] 
+
+def main():
+    if check_region(Region) == []:
+        print(f"'{Region}' isn't a region in the Pokemon series.", file=sys.stderr)
+        return
+    create_table_result()
+    games = get_games_by_region(Region)
+    locations = get_locations(Region)
+    for location in locations:
+        create_table()
+        for game in games:
+            density = 0
+            pokemons = get_pokemon_by_location(location, game)
+            for pokemon in pokemons:
+                r = (get_height(pokemon[0]) * 100)/2
+                volume = (4/3) * math.pi * r**3
+                weight = get_weight(pokemon[0]) * 1000
+                density += (weight / volume) * ((get_rarity(pokemon[0], location, game, pokemon[1])/100))
+            insert_values(game, density)
+        rows = return_values()
+        average = 0
+        c = 0
+        for row in rows:
+            if row[1] != 0:
+                c += 1
+                average += row[1]
+        if c != 0:
+            average = average / c
+        else:
+            average = 0
+        insert_locations(location, round(average, 4))
+        delete_table()
+
+    rows = return_locations()
+    longest_location = 0
+    longest_type = 0
+
+    for i in range(len(rows)):
+        if longest_location < len(str(rows[i][0])):
+            longest_location = len(str(rows[i][0]))
+        if longest_type < len(str(rows[i][1])):
+            longest_type = len(str(rows[i][1]))
+    move_len = f"{{:<{longest_location}}}"
+
+    for row in rows:
+        print(f"{move_len.format(row[0])} {row[1]}")
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)

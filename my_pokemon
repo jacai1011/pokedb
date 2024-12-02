@@ -1,0 +1,267 @@
+import sys
+import psycopg2
+from random import Random
+
+### Globals
+db = None
+Seed = None
+rng = None
+
+
+### Command-line args
+if len(sys.argv) != 2:
+    print(f"Usage: {sys.argv[0]} <Seed>", file=sys.stderr)
+Seed = int(sys.argv[1])
+rng  = Random(Seed)
+
+def menu(items: list[str]) -> int:
+    """
+    Given a list of strings,
+    print a numbered menu
+    and return the user's selection.
+    """
+    padding = len(str(len(items)))
+    print(f"Select an option from the menu below by entering its number:")
+    for i, item in enumerate(items):
+        print(f"{i+1:{padding}}) {item}")
+    ret = int(input("> Selection: ")) - 1
+    if not sys.stdin.isatty():
+        print(f"{ret+1}")
+    print()
+    return ret
+
+
+def menu(items: list[str]) -> int:
+    """
+    Given a list of strings,
+    print a numbered menu
+    and return the user's selection.
+    """
+    padding = len(str(len(items)))
+    print(f"Select an option from the menu below by entering its number:")
+    for i, item in enumerate(items):
+        print(f"{i+1:{padding}}) {item}")
+    ret = int(input("> Selection: ")) - 1
+    if not sys.stdin.isatty():
+        print(f"{ret+1}")
+    print()
+    return ret
+
+
+def get_games():
+    cur = db.cursor()
+    cur.execute("SELECT name FROM Games ORDER BY random() LIMIT 10;")
+    return [row[0] for row in cur.fetchall()]
+
+def get_pokemons(game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Pokemon.Name FROM Pokemon
+        JOIN Pokedex ON National_ID = Pokemon.ID
+        JOIN Games ON Pokedex.Game = Games.ID
+        WHERE Games.Name like %s
+        ORDER BY random()
+        LIMIT 10;
+    """, (game_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_abilities(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Abilities.Name FROM Abilities
+        JOIN Knowable_Abilities ON Abilities.ID = Knowable_Abilities.Knows
+        JOIN Pokemon ON Knowable_Abilities.Known_By = Pokemon.ID
+        WHERE Pokemon.Name like %s
+        ORDER BY Abilities.ID;
+    """, (pokemon_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_moves(pokemon_name, game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT DISTINCT Moves.Name, Moves.ID FROM Moves
+        JOIN Learnable_Moves ON Moves.ID = Learnable_Moves.Learns
+        JOIN Requirements ON Learnable_Moves.Learnt_When = Requirements.ID
+        JOIN Pokemon ON Learnable_Moves.Learnt_By = Pokemon.ID
+        JOIN Games ON Learnable_Moves.Learnt_In = Games.ID
+        WHERE Requirements.Assertion LIKE %s AND Pokemon.Name LIKE %s AND Games.Name LIKE %s
+        ORDER BY Moves.ID;
+    """, ('Level%', pokemon_name, game_name))
+    return [row[0] for row in cur.fetchall()]
+
+def get_species(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Species FROM Pokemon
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    result = cur.fetchone()
+    return str(result[0])
+
+def get_types(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Types.Name FROM Types
+        JOIN Pokemon ON First_Type = Types.ID OR Second_Type = Types.ID
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_pokedex_reg(pokemon_name, game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Regional_ID FROM Pokedex
+        JOIN Pokemon ON National_ID = Pokemon.ID
+        JOIN Games ON Pokedex.Game = Games.ID
+        WHERE Pokemon.Name LIKE %s AND Games.Name LIKE %s
+    """, (pokemon_name, game_name))
+    return cur.fetchone()[0]
+
+def get_pokedex_nat(pokemon_name, game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT (National_ID).Pokedex_Number FROM Pokedex
+        JOIN Pokemon ON National_ID = Pokemon.ID
+        JOIN Games ON Pokedex.Game = Games.ID
+        WHERE Pokemon.Name LIKE %s AND Games.Name LIKE %s
+    """, (pokemon_name, game_name))
+    return cur.fetchone()[0]
+
+def get_move_type(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Types.Name FROM Types
+        JOIN Moves ON Moves.Of_type = Types.ID
+        WHERE Moves.name LIKE %s
+    """, (move,))
+    result = cur.fetchone()[0]
+    result = "[" + str(result) + "]"
+    return result
+
+def get_move_category(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Moves.Category FROM Moves
+        JOIN Types ON Moves.Of_type = Types.ID
+        WHERE Moves.name LIKE %s
+    """, (move,))
+    result = str(cur.fetchone()[0])
+    return result
+
+def get_move_power(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Moves.Power FROM Moves
+        JOIN Types ON Moves.Of_type = Types.ID
+        WHERE Moves.name LIKE %s
+    """, (move,))
+    result = str(cur.fetchone()[0])
+    return result
+
+def get_move_acc(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Moves.Accuracy FROM Moves
+        JOIN Types ON Moves.Of_type = Types.ID
+        WHERE Moves.name LIKE %s
+    """, (move,))
+    result = str(cur.fetchone()[0])
+    return result
+
+def create_table():
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE values (
+            move TEXT PRIMARY KEY,
+            type text,
+            cat text
+        )
+    """, )
+    return 
+
+def insert_values(move, type, cat):
+    cur = db.cursor()
+    cur.execute("""
+        INSERT INTO values (move, type, cat) VALUES (%s, %s, %s)
+    """, (move, type, cat))
+    return 
+
+def return_values():
+    cur = db.cursor()
+    cur.execute("""
+        SELECT move, type, cat FROM values
+    """, )
+    return [row for row in cur.fetchall()] 
+
+def main():
+    cur = db.cursor()
+    create_table()
+    cur.execute("SELECT setseed(%s);", (rng.random(),))
+    games = get_games()
+    game = games[menu(games)]
+    pokemons = get_pokemons(game)
+    pokemon = pokemons[menu(pokemons)]
+    abilities = get_abilities(pokemon)
+    ability = abilities[menu(abilities)]
+    moves = get_moves(pokemon, game)
+    move1 = moves[menu(moves)]
+    moves.remove(move1)
+    move2 = moves[menu(moves)]
+    moves.remove(move2)
+    move3 = moves[menu(moves)]
+    moves.remove(move3)
+    move4 = moves[menu(moves)]
+    print(f"Here is your new Pokemon (from Pokemon {game}):\n")
+    print(f"Name: {pokemon}")
+    print(f"Species: {get_species(pokemon)}")
+    if len(get_types(pokemon)) == 2:
+        print(f"Type: {get_types(pokemon)[0]} + {get_types(pokemon)[1]}")
+    else:
+        print(f"Type: {get_types(pokemon)[0]}")
+    print(f"Pokedex Number: {get_pokedex_reg(pokemon, game)} ({get_pokedex_nat(pokemon, game)})\n")
+    print(f"Ability: {ability}\n")
+    print(f"Moves:")
+    info = "(Category: " + get_move_category(move1) +", Power: " + get_move_power(move1) + ", Accuracy: " + get_move_acc(move1) + ")"
+    insert_values(move1, get_move_type(move1), info)
+    info = "(Category: " + get_move_category(move2) +", Power: " + get_move_power(move2) + ", Accuracy: " + get_move_acc(move2) + ")"
+    insert_values(move2, get_move_type(move2), info)
+    info = "(Category: " + get_move_category(move3) +", Power: " + get_move_power(move3) + ", Accuracy: " + get_move_acc(move3) + ")"
+    insert_values(move3, get_move_type(move3), info)
+    info = "(Category: " + get_move_category(move4) +", Power: " + get_move_power(move4) + ", Accuracy: " + get_move_acc(move4) + ")"
+    insert_values(move4, get_move_type(move4), info)
+
+    rows = return_values()
+    longest_move = 0
+    longest_type = 0
+    longest_cat = 0
+
+    for i in range(len(rows)):
+        if longest_move < len(str(rows[i][0])):
+            longest_move = len(str(rows[i][0]))
+        if longest_type < len(str(rows[i][1])):
+            longest_type = len(str(rows[i][1]))
+        if longest_cat < len(str(rows[i][2])):
+            longest_cat = len(str(rows[i][2]))
+
+    move_len = f"{{:<{longest_move}}}"
+    type_len = f"{{:<{longest_type}}}"
+    cat_len = f"{{:<{longest_cat}}}"
+
+    for row in rows:
+        print(f"	{move_len.format(row[0])} {type_len.format(row[1])} {cat_len.format(row[2])}")
+    print('')
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)

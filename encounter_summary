@@ -1,0 +1,215 @@
+import sys
+import psycopg2
+import helpers
+
+
+### Globals
+db = None
+Location = None
+Game = None
+
+
+### Command-line args
+if len(sys.argv) != 3:
+    print(f"Usage: {sys.argv[0]} <Location> <Game>", file=sys.stderr)
+    sys.exit(1)
+Location = helpers.clean(sys.argv[1])
+Game     = helpers.clean(sys.argv[2])
+
+
+def get_pokemon_by_location(location, game):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Pokemon.Name, Encounters.ID FROM Pokemon
+        JOIN Encounters ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID
+        WHERE Locations.Name = %s AND Games.Name = %s
+    """, (location, game,))
+    return [row for row in cur.fetchall()]
+
+def get_types(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Types.Name FROM Types
+        JOIN Pokemon ON First_Type = Types.ID OR Second_Type = Types.ID
+        WHERE Pokemon.Name LIKE %s
+        ORDER BY Pokemon.First_Type, Pokemon.Second_Type
+    """, (pokemon_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_rarity(pokemon_name, location, game, e_id):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Rarity FROM Encounters
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID 
+        WHERE Pokemon.Name LIKE %s AND Locations.Name = %s AND Games.Name LIKE %s AND Encounters.ID = %s
+    """, (pokemon_name, location, game, e_id))
+    return cur.fetchone()[0]
+
+def get_min_level(pokemon_name, location, game, e_id):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT (Levels).min FROM Encounters
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID 
+        WHERE Pokemon.Name LIKE %s AND Locations.Name = %s AND Games.Name LIKE %s AND Encounters.ID = %s
+    """, (pokemon_name, location, game, e_id))
+    return cur.fetchone()[0]
+
+def get_max_level(pokemon_name, location, game, e_id):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT (Levels).max FROM Encounters
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID 
+        WHERE Pokemon.Name LIKE %s AND Locations.Name = %s AND Games.Name LIKE %s AND Encounters.ID = %s
+    """, (pokemon_name, location, game, e_id))
+    return cur.fetchone()[0]
+
+def get_req(pokemon_name, location, game, e_id):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Requirements.Assertion FROM Requirements
+        JOIN Encounter_Requirements ON Requirements.ID = Encounter_Requirements.Requirement
+        JOIN Encounters ON Encounter_Requirements.Encounter = Encounters.ID
+        JOIN Locations ON Locations.ID = Encounters.Occurs_At
+        JOIN Games ON Locations.Appears_In = Games.ID 
+        JOIN Pokemon ON Encounters.Occurs_With = Pokemon.ID
+        WHERE Pokemon.Name LIKE %s AND Locations.Name = %s AND Games.Name LIKE %s AND Encounters.ID = %s
+    """, (pokemon_name, location, game, e_id))
+    return [row[0] for row in cur.fetchall()]
+
+def get_egg_group(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Egg_Groups.Name FROM Egg_Groups
+        JOIN In_Group ON Egg_Groups.ID = In_Group.Egg_Group
+        JOIN Pokemon ON In_Group.Pokemon = Pokemon.ID
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def get_abilities(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Abilities.Name FROM Abilities
+        JOIN Knowable_Abilities ON Abilities.ID = Knowable_Abilities.Knows
+        JOIN Pokemon ON Knowable_Abilities.Known_By = Pokemon.ID
+        WHERE Pokemon.Name like %s AND Knowable_Abilities.Hidden = False
+    """, (pokemon_name,))
+    return [row[0] for row in cur.fetchall()]
+
+def create_table():
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE values (
+            id INTEGER PRIMARY KEY,
+            pokemon TEXT,
+            type text[],
+            rarity INTEGER,
+            min INTEGER,
+            max INTEGER,
+            egg text[],
+            ability text[],
+            req text[]
+        )
+    """, )
+    return 
+
+def insert_values(id, pokemon, type, rarity, min, max, egg, ability, req):
+    cur = db.cursor()
+    cur.execute("""
+        INSERT INTO values (id, pokemon, type, rarity, min, max, egg, ability, req) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (id, pokemon, type, rarity, min, max, egg, ability, req,))
+    return 
+
+def check_game(game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Name FROM Games
+        WHERE Name LIKE %s
+    """, (game_name,))
+    return cur.fetchall()
+
+def return_values():
+    cur = db.cursor()
+    cur.execute("""
+        SELECT pokemon, type, rarity, min, max, egg, ability, req FROM values
+        ORDER BY rarity DESC, pokemon, max, req ASC
+    """, )
+    return [row for row in cur.fetchall()] 
+
+def check_location(location):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Name FROM Locations
+        WHERE Name LIKE %s
+    """, (location,))
+    return cur.fetchall()
+
+def check_location_in_game(location, game):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Locations.Name FROM Locations
+        JOIN Games ON Locations.Appears_In = Games.ID
+        WHERE Locations.Name LIKE %s AND Games.Name LIKE %s
+    """, (location, game,))
+    return cur.fetchall()
+
+def main():
+    if check_location(Location) == []:
+        print(f"'{Location}' isn't a location in the Pokemon series.", file=sys.stderr)
+        return
+    if check_game(Game) == []:
+        print(f"'Pokemon {Game}' isn't a game in the Pokemon series.", file=sys.stderr)
+        return
+    if check_location_in_game(Location, Game) == []:
+        print(f"'{Location}' isn't in 'Pokemon {Game}'.", file=sys.stderr)
+        return
+    
+    print(f"In 'Pokemon {Game}' at '{Location}' the following Pokemon can be Encountered:\n")
+    pokemons = get_pokemon_by_location(Location, Game)
+    create_table()
+    for pokemon in pokemons:
+        insert_values(pokemon[1], pokemon[0], get_types(pokemon[0]), get_rarity(pokemon[0], Location, Game, pokemon[1]), 
+                    get_min_level(pokemon[0], Location, Game, pokemon[1]), get_max_level(pokemon[0], Location, Game, pokemon[1]), 
+                    get_egg_group(pokemon[0]), get_abilities(pokemon[0]), get_req(pokemon[0], Location, Game, pokemon[1]))
+    for row in return_values():
+        print(f"    {row[0]}:")
+        if len(row[1]) == 1:
+            print(f"            Type: {row[1][0]}")
+        else:
+            print(f"            Type: {row[1][0]}/{row[1][1]}")
+        print(f"            Rarity: {row[2]}%")
+        print(f"            Levels: min {row[3]}, max {row[4]}")
+        if len(row[5]) == 1: 
+            print(f"            Egg Groups: {row[5][0]}")
+        else:
+            print(f"            Egg Groups: {row[5][0]}, {row[5][1]}")
+        if len(row[6]) == 1: 
+            print(f"            Abilities: {row[6][0]}")
+        else:
+            print(f"            Abilities: {row[6][0]}, {row[6][1]}")
+        print('            Encounter Requirements:')
+        for req in row[7]:
+            print(f"                    {req}")
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)

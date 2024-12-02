@@ -1,0 +1,268 @@
+import sys
+import psycopg2
+import helpers
+from os import truncate
+
+### Globals
+db = None
+Attacking_Pokemon_Name = None
+Defending_Pokemon_Name = None
+Pokemon_Game_Name      = None
+
+
+### Command-line args
+if len(sys.argv) != 4:
+    print(f"Usage: {sys.argv[0]} <Attacking Pokemon Name> <Defending Pokemon Name> <Pokemon Game Name>", file=sys.stderr)
+    sys.exit(1)
+Attacking_Pokemon_Name = helpers.clean(sys.argv[1])
+Defending_Pokemon_Name = helpers.clean(sys.argv[2])
+Pokemon_Game_Name      = helpers.clean(sys.argv[3])
+
+
+def get_all_moves(pokemon_name, game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT DISTINCT Moves.Name, Moves.Power FROM Moves
+        JOIN Learnable_Moves ON Moves.ID = Learnable_Moves.Learns
+        JOIN Requirements ON Learnable_Moves.Learnt_When = Requirements.ID
+        JOIN Pokemon ON Learnable_Moves.Learnt_By = Pokemon.ID
+        JOIN Games ON Learnable_Moves.Learnt_In = Games.ID
+        WHERE Pokemon.Name LIKE %s AND Games.Name LIKE %s AND Moves.Power IS NOT NULL
+    """, (pokemon_name, game_name))
+    return [row[0] for row in cur.fetchall()]
+
+def get_power_category(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Power, Category FROM Moves
+        WHERE Moves.Name LIKE %s
+    """, (move,))
+    return [row for row in cur.fetchall()]
+
+def get_pokemon_stats(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Base_stats FROM Pokemon
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return cur.fetchone()[0]
+
+def get_move_type(move):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Types.ID FROM Types
+        JOIN Moves ON Types.ID = Moves.Of_Type
+        WHERE Moves.Name LIKE %s
+    """, (move,))
+    return cur.fetchone()[0]
+
+def get_pokemon_types(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT First_Type, Second_Type FROM Pokemon
+        WHERE Pokemon.Name LIKE %s
+    """, (pokemon_name,))
+    return [row for row in cur.fetchall()]
+
+def get_multiplier(atk_type, def_type):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Multiplier FROM Type_Effectiveness
+        WHERE Attacking = %s AND Defending = %s
+    """, (atk_type, def_type,))
+    return [row[0] for row in cur.fetchall()]
+
+def round_value(value):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT TRUNC(ROUND(%s::Numeric, 1)) 
+    """, (value,))
+    return cur.fetchone()[0]
+
+def create_table():
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE values (
+            move TEXT PRIMARY KEY,
+            min INTEGER,
+            max INTEGER
+        )
+    """, )
+    return 
+
+def insert_values(move, min, max):
+    cur = db.cursor()
+    cur.execute("""
+        INSERT INTO values (move, min, max) VALUES (%s, %s, %s)
+    """, (move, min, max,))
+    return 
+
+def return_values():
+    cur = db.cursor()
+    cur.execute("""
+        SELECT move, min, max FROM values
+        ORDER BY max, min, move
+    """, )
+    return [row for row in cur.fetchall()] 
+
+def check_no_effect_moves(atk_type, def_type):
+    if atk_type == 0 and def_type == 13:
+        return 1
+    elif atk_type == 13 and def_type == 0:
+        return 1
+    elif atk_type == 3 and def_type == 8:
+        return 1
+    elif atk_type == 6 and def_type == 13:
+        return 1
+    elif atk_type == 8 and def_type == 9:
+        return 1
+    elif atk_type == 7 and def_type == 16:
+        return 1
+    elif atk_type == 10 and def_type == 15:
+        return 1
+    elif atk_type == 14 and def_type == 17:
+        return 1
+    else:
+        return 0
+
+def check_name(pokemon_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Name FROM Pokemon
+        WHERE Name LIKE %s
+    """, (pokemon_name,))
+    return cur.fetchall()
+
+def check_game(game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Name FROM Games
+        WHERE Name LIKE %s
+    """, (game_name,))
+    return cur.fetchall()
+
+def check_pokemon_in_game(pokemon_name, game_name):
+    cur = db.cursor()
+    cur.execute("""
+        SELECT Games.Name FROM Games
+        JOIN Pokedex ON Game = Games.ID
+        JOIN Pokemon ON Pokedex.National_ID = Pokemon.ID
+        WHERE Games.Name LIKE %s AND Pokemon.Name LIKE %s
+    """, (game_name, pokemon_name,))
+    return cur.fetchall()
+
+def main():
+
+    if check_name(Attacking_Pokemon_Name) == []:
+        print(f"'{Attacking_Pokemon_Name}' isn't a Pokemon that exists.", file=sys.stderr)
+        return
+        
+    if check_name(Defending_Pokemon_Name) == []:
+        print(f"'{Defending_Pokemon_Name}' isn't a Pokemon that exists.", file=sys.stderr)
+        return
+
+    if check_game(Pokemon_Game_Name) == []:
+        print(f"'Pokemon {Pokemon_Game_Name}' isn't a game in the Pokemon series.", file=sys.stderr)
+        return
+
+    if check_pokemon_in_game(Attacking_Pokemon_Name, Pokemon_Game_Name) == []:
+        print(f"'{Attacking_Pokemon_Name}' doesn't appear in 'Pokemon {Pokemon_Game_Name}'.", file=sys.stderr)
+        return        
+
+    moves = get_all_moves(Attacking_Pokemon_Name, Pokemon_Game_Name)
+    atkstats = get_pokemon_stats(Attacking_Pokemon_Name)
+    atkstats = atkstats.replace("(", "").replace(")", "")
+    atksubstats = atkstats.split(",")
+    atk_stats_list = [int(atksubstats) for atksubstats in atksubstats]
+
+    defstats = get_pokemon_stats(Defending_Pokemon_Name)
+    defstats = defstats.replace("(", "").replace(")", "")
+    defsubstats = defstats.split(",")
+    def_stats_list = [int(defsubstats) for defsubstats in defsubstats]
+
+    create_table()
+    for move in moves:
+        min_atk_lvl = 1.00
+        max_atk_lvl = 100.00
+        atk_power = get_power_category(move)[0][0]
+        if get_power_category(move)[0][1] == 'Special':
+            atker_atk = atk_stats_list[3]
+            defer_def = def_stats_list[4]
+        else:
+            atker_atk = atk_stats_list[1]
+            defer_def = def_stats_list[2]
+        min_rand = 0.85
+        max_rand = 1.00
+
+        if get_move_type(move) in get_pokemon_types(Attacking_Pokemon_Name)[0]:
+            stab = 1.50
+        else:
+            stab = 1.00
+        type = get_multiplier(get_move_type(move), get_pokemon_types(Defending_Pokemon_Name)[0][0])
+
+        if type == [200]:
+            mult = 2
+        elif type == []:
+            mult = 1
+        else:
+            mult = 0.50
+        if check_no_effect_moves(get_move_type(move), get_pokemon_types(Defending_Pokemon_Name)[0][0]) == 1:
+            mult = 0
+
+        type = get_multiplier(get_move_type(move), get_pokemon_types(Defending_Pokemon_Name)[0][1])
+        if type != None:
+            if type == [200]:
+                mult = mult * 2
+            elif type == []:
+                mult = mult * 1
+            else:
+                mult = mult * 0.50
+            if check_no_effect_moves(get_move_type(move), get_pokemon_types(Defending_Pokemon_Name)[0][1]) == 1:
+                mult = 0
+
+        if mult != 0:
+            min_dmg = ((((((2 * min_atk_lvl) / 5) + 2) * atk_power * (atker_atk / defer_def)) / 50) + 2) * min_rand * stab * mult
+            max_dmg = ((((((2 * max_atk_lvl) / 5) + 2) * atk_power * (atker_atk / defer_def)) / 50) + 2) * max_rand * stab * mult
+            min = int(round_value(min_dmg))
+            max = int(round_value(max_dmg))
+            move = f"'{move}'"
+            insert_values(move, min, max)
+
+    rows = return_values()
+    if rows == []:
+        print(f"\nIn 'Pokemon {Pokemon_Game_Name}', '{Attacking_Pokemon_Name}' can't attack '{Defending_Pokemon_Name}'.")
+        return
+    longest_move = 0
+    longest_min = 0
+    longest_max = 0
+
+    for i in range(len(rows)):
+        if longest_move < len(str(rows[i][0])):
+            longest_move = len(str(rows[i][0]))
+        if longest_min < len(str(rows[i][1])):
+            longest_min = len(str(rows[i][1]))
+        if longest_max < len(str(rows[i][2])):
+            longest_max = len(str(rows[i][2]))
+
+    move_len = f"{{:<{longest_move}}}"
+    min_len = f"{{:>{longest_min}}}"
+    max_len = f"{{:>{longest_max}}}"
+    print(f"\nIn 'Pokemon {Pokemon_Game_Name}', When '{Attacking_Pokemon_Name}' attacks '{Defending_Pokemon_Name}', '{Attacking_Pokemon_Name}' can use the following moves:\n")
+    for row in rows:
+        print(f"	{move_len.format(row[0])} for a minimum of {min_len.format(row[1])} damage and a maximum of {max_len.format(row[2])} damage to '{Defending_Pokemon_Name}'.")
+    print('')
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)
